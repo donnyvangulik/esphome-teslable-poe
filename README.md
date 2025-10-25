@@ -14,9 +14,9 @@ Moving networking from Wi‑Fi to **PoE Ethernet** leaves the ESP32's wireless r
 
 - **Ethernet PHY:** W5500 (SPI). The YAML maps the required pins (`clk`, `mosi`, `miso`, `cs`, `int`, `reset`).
 
-- **Enclosure:** A remixed case from Printables to accommodate the PoE shield.  
-  The remix (3MF) is included in `hardware/case/`.  
-  _Credit the original Printables designer in your description when you publish._
+- **Enclosure:** A remixed case from Makerworld to accommodate the PoE shield.  
+  The remix (3MF) is included in `hardware/case/`.  However, this updated version on Makerworld is significantly better. 
+(https://makerworld.com/en/models/1536469-waveshare-esp32-s3-eth-poe-case-opendtu#profileId-1611913)
 
 ---
 
