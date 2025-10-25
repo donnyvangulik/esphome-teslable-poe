@@ -1,0 +1,415 @@
+# ===================================================================
+# ESPHome Configuration for Tesla BLE on Waveshare ESP32-S3-PoE
+#
+# This configuration is adapted from the original project to use
+# a wired Ethernet connection instead of WiFi.
+# Corrected for YAML platform errors and runtime logic.
+# Added a BLE scan filter to prevent buffer overflows and improve stability.
+# ===================================================================
+
+substitutions:
+  # --- User Configuration ---
+  # Set these values in your secrets.yml file or replace them directly.
+  friendly_name: "Tesla BLE Ethernet"
+  device_name: "tesla-ble-ethernet"
+  ble_mac_address: !secret ble_mac_address # Your Tesla's BLE MAC address
+  tesla_vin: !secret tesla_vin             # Your Tesla's VIN
+  charging_amps_max: "16"                  # Max charging amps of your charger
+  ota_password: !secret ota_password       # Password for Over-The-Air updates
+  api_encryption_key: !secret api_key      # Encryption key for the Home Assistant API
+
+# ===================================================================
+# Board and Core System Configuration
+# ===================================================================
+esphome:
+  name: ${device_name}
+  name_add_mac_suffix: false
+  friendly_name: ${friendly_name}
+  project:
+    name: PedroKTFC.esphome-tesla-ble-eth
+    version: "2025.1.0"
+  libraries:
+    # Required library for the Tesla BLE component
+    - https://github.com/PedroKTFC/tesla-ble.git
+
+esp32:
+  board: esp32-s3-devkitc-1
+  framework:
+    type: esp-idf
+  flash_size: 16MB
+
+psram:
+  mode: octal
+  speed: 80MHz
+
+# ===================================================================
+# Network Configuration (Ethernet)
+# ===================================================================
+ethernet:
+  type: W5500
+  clk_pin: GPIO13
+  mosi_pin: GPIO11
+  miso_pin: GPIO12
+  cs_pin: GPIO14
+  interrupt_pin: GPIO10
+  reset_pin: GPIO9
+
+# ===================================================================
+# API & OTA
+# ===================================================================
+# Enable Home Assistant API
+api:
+  encryption:
+    key: ${api_encryption_key}
+
+# Enable Over-The-Air updates
+ota:
+  platform: esphome
+  password: ${ota_password}
+
+# ===================================================================
+# BLE and Custom Components
+# ===================================================================
+# External component source for the Tesla integration
+external_components:
+  source: github://PedroKTFC/esphome-tesla-ble
+
+# BLE tracker configuration
+esp32_ble_tracker:
+  scan_parameters:
+    #  only use these values on Ethernet not WIFI
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+bluetooth_proxy:
+  active: true
+
+
+# BLE client for connecting to the vehicle
+ble_client:
+  - mac_address: $ble_mac_address
+    id: ble_tesla_id
+
+# ===================================================================
+# Logger and Time
+# ===================================================================
+logger:
+  # Set back to INFO to improve performance.
+  level: INFO
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+# ===================================================================
+# Main Tesla Vehicle Component and Entities
+# ===================================================================
+tesla_ble_vehicle:
+  ble_client_id: ble_tesla_id
+  id: tesla_ble_vehicle_id
+  vin: $tesla_vin
+  update_interval: 10s
+  post_wake_poll_time: 300
+  poll_data_period: 60
+  poll_asleep_period: 60
+  poll_charging_period: 10
+  ble_disconnected_min_time: 300
+  # --- Tesla Vehicle Sensors ---
+  is_asleep:
+    name: "Asleep"
+  is_user_present:
+    name: "User presence"
+  is_unlocked:
+    name: "Doors"
+  is_charge_flap_open:
+    id: "is_charge_flap_open"
+    name: "Charge flap"
+  is_boot_open:
+    id: "is_boot_open"
+    name: "Boot"
+  is_frunk_open:
+    id: "is_frunk_open"
+    name: "Frunk"
+  shift_state:
+    name: "Shift state"
+  defrost_state:
+    id: "defrost_state"
+    name: "Defrost state"
+  charge_state:
+    id: "charge_state"
+    name: "Charge level"
+  odometer:
+    name: "Odometer"
+    filters:
+      - multiply: 0.01 # Convert from hundredths of a mile
+  charge_current:
+    id: "charge_current"
+    name: "Charge current"
+  charge_power:
+    id: "charge_power"
+    name: "Charge power"
+  max_soc:
+    id: "max_soc"
+    name: "Charge limit"
+  max_amps:
+    id: "max_amps"
+    name: "Current limit"
+  battery_range:
+    name: "Range"
+  charging_state:
+    id: "charging_state"
+    name: "Charging state"
+  last_update:
+    name: "Last update"
+  is_climate_on:
+    id: "is_climate_on"
+    name: "Climate"
+  internal_temp:
+    name: "Interior"
+  external_temp:
+    name: "Exterior"
+
+# ===================================================================
+# Other Entities
+# ===================================================================
+
+# --- Diagnostic and Status Sensors ---
+sensor:
+  - platform: uptime
+    name: "Uptime"
+    update_interval: 60s
+    icon: mdi:clock-outline
+  - platform: ble_client
+    type: rssi
+    id: ble_signal
+    ble_client_id: ble_tesla_id
+    name: "BLE Signal"
+    icon: mdi:bluetooth
+    update_interval: 60s
+    entity_category: diagnostic
+
+
+text_sensor:
+  - platform: version
+    name: "Version"
+    icon: mdi:cube-outline
+  - platform: ethernet_info
+    ip_address:
+      name: "IP Address"
+
+# --- Buttons ---
+button:
+  - platform: restart
+    name: Restart
+    icon: mdi:restart
+    entity_category: diagnostic
+  - platform: template
+    id: ble_pair
+    name: Pair BLE key
+    icon: mdi:key-wireless
+    on_press:
+      - lambda: id(tesla_ble_vehicle_id)->startPair();
+    entity_category: diagnostic
+  - platform: template
+    name: Wake up
+    icon: mdi:sleep-off
+    on_press:
+    - lambda: id(tesla_ble_vehicle_id)->wakeVehicle();
+  - platform: template
+    name: Flash light
+    icon: mdi:car-light-high
+    on_press:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (FLASH_LIGHT, 0);
+  - platform: template
+    name: Sound horn
+    icon: mdi:bugle
+    on_press:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (SOUND_HORN, 0);
+  - platform: template
+    name: Unlock charge port
+    icon: mdi:ev-plug-ccs2
+    on_press:
+      - lambda: id(tesla_ble_vehicle_id)->sendVCSECClosureMoveRequestMessage (VCSEC_ClosureMoveRequest_chargePort_tag, VCSEC_ClosureMoveType_E_CLOSURE_MOVE_TYPE_OPEN);
+  - platform: template
+    name: Regenerate key
+    icon: mdi:key-change
+    on_press:
+      - lambda: id(tesla_ble_vehicle_id)->regenerateKey();
+    entity_category: diagnostic
+    disabled_by_default: true
+  - platform: template
+    name: Force data update
+    icon: mdi:database-sync
+    on_press:
+      - lambda: id(tesla_ble_vehicle_id)->enqueueVCSECInformationRequest(true);
+    entity_category: diagnostic
+
+# --- Switches ---
+switch:
+  - platform: ble_client
+    ble_client_id: ble_tesla_id
+    name: "BLE Connection"
+    entity_category: diagnostic
+  - platform: template
+    name: "Charger"
+    optimistic: true
+    icon: mdi:lightning-bolt
+    restore_mode: RESTORE_DEFAULT_OFF
+    lambda: |-
+      if ((id(charging_state).state == "Charging") or (id(charging_state).state == "Starting") or (id(charging_state).state == "Calibrating")) {
+        return true;
+      } else {
+        return false;
+      }
+    turn_on_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_CHARGING_SWITCH, 1);
+    turn_off_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_CHARGING_SWITCH, 0);
+  - platform: template
+    name: "Sentry mode"
+    optimistic: true
+    icon: mdi:record-circle-outline
+    assumed_state: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_SENTRY_SWITCH, 1);
+    turn_off_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_SENTRY_SWITCH, 0);
+  - platform: template
+    name: "Climate"
+    optimistic: true
+    icon: mdi:fan
+    lambda: |-
+      if (id(is_climate_on).state) {
+        return true;
+      } else {
+        return false;
+      }
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_HVAC_SWITCH, 1);
+    turn_off_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_HVAC_SWITCH, 0);
+  - platform: template
+    name: "Steering wheel heat"
+    optimistic: true
+    icon: mdi:steering
+    assumed_state: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    turn_on_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_HVAC_STEERING_HEATER_SWITCH, 1);
+    turn_off_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_HVAC_STEERING_HEATER_SWITCH, 0);
+  - platform: template
+    name: Defrost car
+    optimistic: true
+    icon: mdi:snowflake-melt
+    lambda: |-
+      if (id(defrost_state).state != "Off") {
+        return true;
+      } else {
+        return false;
+      }
+    turn_on_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (DEFROST_CAR, 1);
+    turn_off_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (DEFROST_CAR, 0);
+
+# --- Covers ---
+cover:
+  - platform: template
+    name: "Vent"
+    optimistic: true
+    icon: mdi:car-door
+    assumed_state: false
+    close_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (SET_WINDOWS_SWITCH, 1);
+    open_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage (SET_WINDOWS_SWITCH, 0);
+  - platform: template
+    name: "Charge port"
+    optimistic: true
+    device_class: door
+    icon: mdi:ev-plug-ccs2
+    lambda: |-
+      if (id(is_charge_flap_open).state) {
+        return COVER_OPEN;
+      } else {
+        return COVER_CLOSED;
+      }
+    open_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_OPEN_CHARGE_PORT_DOOR,1);
+    close_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_CLOSE_CHARGE_PORT_DOOR,1);
+  - platform: template
+    name: "Boot"
+    optimistic: true
+    device_class: door
+    icon: mdi:car-back
+    lambda: |-
+      if (id(is_boot_open).state) {
+        return COVER_OPEN;
+      } else {
+        return COVER_CLOSED;
+      }
+    open_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendVCSECClosureMoveRequestMessage (VCSEC_ClosureMoveRequest_rearTrunk_tag, VCSEC_ClosureMoveType_E_CLOSURE_MOVE_TYPE_OPEN);
+    close_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendVCSECClosureMoveRequestMessage (VCSEC_ClosureMoveRequest_rearTrunk_tag, VCSEC_ClosureMoveType_E_CLOSURE_MOVE_TYPE_CLOSE);
+  - platform: template
+    name: "Frunk"
+    optimistic: true
+    device_class: door
+    icon: mdi:car
+    lambda: |-
+      if (id(is_frunk_open).state) {
+        return COVER_OPEN;
+      } else {
+        return COVER_CLOSED;
+      }
+    open_action:
+      - lambda: id(tesla_ble_vehicle_id)->sendVCSECClosureMoveRequestMessage (VCSEC_ClosureMoveRequest_frontTrunk_tag, VCSEC_ClosureMoveType_E_CLOSURE_MOVE_TYPE_OPEN);
+
+# --- Number Inputs ---
+number:
+  - platform: template
+    name: "Charging amps"
+    id: charging_amps
+    icon: mdi:ev-station
+    unit_of_measurement: "A"
+    mode: slider
+    update_interval: 2s
+    min_value: 0
+    max_value: $charging_amps_max
+    step: 1
+    set_action:
+      - lambda: |-
+          int var_x = static_cast<int>(x);
+          id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_CHARGING_AMPS, var_x);
+    lambda: |-
+      if (id(max_amps).has_state())
+      {
+        return id(max_amps).state;
+      }
+      else return (0);
+  - platform: template
+    name: "Charging limit"
+    id: charging_limit
+    icon: mdi:ev-station
+    unit_of_measurement: "%"
+    mode: slider
+    update_interval: 2s
+    min_value: 50
+    max_value: 100
+    step: 1
+    set_action:
+      - lambda: |-
+          int var_x = static_cast<int>(x);
+          id(tesla_ble_vehicle_id)->sendCarServerVehicleActionMessage(SET_CHARGING_LIMIT, var_x);
+    lambda: |-
+      if (id(max_soc).has_state())
+      {
+        return id(max_soc).state;
+      }
+      else return (0);
